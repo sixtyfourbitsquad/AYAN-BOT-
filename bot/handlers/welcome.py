@@ -115,7 +115,7 @@ async def welcome_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle message when admin is in 'add_welcome:<type>' state."""
+    """Handle message when admin is in 'add_welcome:<type>' state. Runs in group=-1 so it gets the update before update_last_seen."""
     user_id = update.effective_user.id if update.effective_user else 0
     if user_id not in config.ADMIN_IDS:
         return
@@ -177,9 +177,11 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
 def register_welcome(app) -> None:
     from telegram.ext import CallbackQueryHandler, MessageHandler, filters
     app.add_handler(CallbackQueryHandler(welcome_callback, pattern="^welcome:"))
+    # group=-1 so this runs before update_last_seen (group=0); otherwise admin's welcome message is never seen
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL | filters.AUDIO | filters.VOICE),
             capture_message_for_welcome,
-        )
+        ),
+        group=-1,
     )

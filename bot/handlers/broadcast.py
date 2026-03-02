@@ -219,9 +219,11 @@ async def broadcast_worker(bot) -> None:
 def register_broadcast(app) -> None:
     from telegram.ext import CallbackQueryHandler, MessageHandler, filters
     app.add_handler(CallbackQueryHandler(broadcast_callback, pattern="^broadcast:"))
+    # group=-1 so this runs before update_last_seen (group=0)
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL | filters.AUDIO | filters.VOICE),
             capture_message_for_broadcast,
-        )
+        ),
+        group=-1,
     )
