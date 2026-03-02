@@ -9,6 +9,8 @@ from bot.database.queries import (
     add_welcome_message,
     delete_welcome_message,
     reorder_welcome_message,
+    move_welcome_message_up,
+    move_welcome_message_down,
     get_welcome_message_by_id,
     get_welcome_count,
     get_user_stats,
