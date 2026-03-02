@@ -50,6 +50,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main() -> None:
     setup_logging()
 
+    # Python 3.12+ no longer auto-creates an event loop in the main thread; run_webhook
+    # needs one. Set it explicitly (uvloop policy already installed above on non-Windows).
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     # HTTP client with timeouts
     request = HTTPXRequest(connection_pool_size=8, read_timeout=30, write_timeout=30)
 
