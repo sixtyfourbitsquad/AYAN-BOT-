@@ -8,18 +8,12 @@ from telegram.ext import ContextTypes
 from bot import config
 from bot.database import (
     get_user_stats,
-    get_welcome_count,
-    get_welcome_messages_ordered,
+    get_welcome_config,
     get_pool,
+    DEFAULT_WELCOME_TEXT,
 )
 from bot.redis_client import get_redis, set_admin_state, get_admin_state, clear_admin_state
-from bot.keyboards import (
-    admin_main_keyboard,
-    welcome_manage_keyboard,
-    welcome_list_keyboard,
-    welcome_type_keyboard,
-    back_to_admin_keyboard,
-)
+from bot.keyboards import admin_main_keyboard, back_to_admin_keyboard
 from bot.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -49,50 +43,39 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await clear_admin_state(user_id)
         return
 
-    if data == "admin:add_welcome":
-        await set_admin_state(user_id, "add_welcome:choose_type")
+    if data == "admin:set_video":
+        await set_admin_state(user_id, "welcome:set_video")
         await query.edit_message_text(
-            "Select the type of welcome message to add:",
-            reply_markup=welcome_type_keyboard(),
+            "📹 Send the welcome video now. You can add a caption to the video.",
+            reply_markup=back_to_admin_keyboard(),
         )
         return
 
-    if data == "admin:manage_welcome":
-        messages = await get_welcome_messages_ordered()
-        if not messages:
-            await query.edit_message_text(
-                "No welcome messages yet. Add one from the main menu.",
-                reply_markup=welcome_manage_keyboard(),
-            )
-            return
+    if data == "admin:set_apk":
+        await set_admin_state(user_id, "welcome:set_apk")
         await query.edit_message_text(
-            "Manage welcome messages (click to preview, 🗑 to delete):",
-            reply_markup=welcome_list_keyboard(messages),
+            "📦 Send the APK file now. You can add a caption.",
+            reply_markup=back_to_admin_keyboard(),
         )
         return
 
     if data == "admin:preview_welcome":
-        messages = await get_welcome_messages_ordered()
-        if not messages:
-            await query.edit_message_text(
-                "No welcome messages to preview.",
+        await query.edit_message_text("Sending preview...")
+        chat_id = query.message.chat_id if query.message else 0
+        try:
+            await send_welcome_flow(context, chat_id, name="Admin")
+            await context.bot.send_message(
+                chat_id,
+                "✅ Preview done.",
                 reply_markup=back_to_admin_keyboard(),
             )
-            return
-        await query.edit_message_text("Sending preview in order...")
-        chat_id = query.message.chat_id if query.message else 0
-        for m in messages:
-            try:
-                await send_welcome_message(context, chat_id, m)
-                await asyncio.sleep(0.3)
-            except Exception as e:
-                logger.exception("Preview send error: %s", e)
-                await context.bot.send_message(chat_id, f"⚠️ Failed to send item: {e}")
-        await context.bot.send_message(
-            chat_id,
-            "✅ Preview done.",
-            reply_markup=back_to_admin_keyboard(),
-        )
+        except Exception as e:
+            logger.exception("Preview error: %s", e)
+            await context.bot.send_message(
+                chat_id,
+                f"⚠️ Error: {e}",
+                reply_markup=back_to_admin_keyboard(),
+            )
         return
 
     if data == "admin:stats":
@@ -142,13 +125,15 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             import time
             uptime = str(int(time.time() - context.bot_data["start_time"])) + "s"
 
-        wc = await get_welcome_count()
+        cfg = await get_welcome_config()
+        video_set = "✅" if cfg.get("video_file_id") else "❌"
+        apk_set = "✅" if cfg.get("apk_file_id") else "❌"
         stats = await get_user_stats()
         text = (
             f"⚙ **Bot Configuration**\n\n"
             f"Uptime: {uptime}\n"
             f"Total users: {stats['total_users']}\n"
-            f"Welcome messages: {wc}\n"
+            f"Welcome video: {video_set} | APK: {apk_set}\n"
             f"Channel ID: `{config.CHANNEL_ID}`\n"
             f"Admin IDs: `{config.ADMIN_IDS}`\n\n"
             f"DB: {db_status}\n"
@@ -190,29 +175,27 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
 
-async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, m: dict) -> None:
-    """Send one welcome message by type."""
-    t = m.get("type", "text")
-    file_id = m.get("file_id")
-    text = m.get("text") or ""
-    caption = m.get("caption") or ""
+async def send_welcome_flow(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
+    """Send default welcome: text (with name) + video (if set) + APK (if set)."""
+    from bot.database import get_welcome_config, DEFAULT_WELCOME_TEXT
     bot = context.bot
-    if t == "text":
-        await bot.send_message(chat_id, text or "(empty text)")
-    elif t == "photo":
-        await bot.send_photo(chat_id, file_id, caption=caption or None)
-    elif t == "video":
-        await bot.send_video(chat_id, file_id, caption=caption or None)
-    elif t == "animation":
-        await bot.send_animation(chat_id, file_id, caption=caption or None)
-    elif t == "document":
-        await bot.send_document(chat_id, file_id, caption=caption or None)
-    elif t == "audio":
-        await bot.send_audio(chat_id, file_id, caption=caption or None)
-    elif t == "voice":
-        await bot.send_voice(chat_id, file_id, caption=caption or None)
-    else:
-        await bot.send_message(chat_id, text or "(unknown type)")
+    text = DEFAULT_WELCOME_TEXT.replace("{name}", name or "User")
+    await bot.send_message(chat_id, text)
+    cfg = await get_welcome_config()
+    if cfg.get("video_file_id"):
+        await asyncio.sleep(0.25)
+        await bot.send_video(
+            chat_id,
+            cfg["video_file_id"],
+            caption=cfg.get("video_caption") or None,
+        )
+    if cfg.get("apk_file_id"):
+        await asyncio.sleep(0.25)
+        await bot.send_document(
+            chat_id,
+            cfg["apk_file_id"],
+            caption=cfg.get("apk_caption") or None,
+        )
 
 
 def register_admin(app) -> None:

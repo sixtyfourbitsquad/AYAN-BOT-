@@ -1,19 +1,19 @@
-"""Chat join request: send welcome messages in order, do NOT approve, log, update stats."""
+"""Chat join request: send default welcome (text + video + APK), do NOT approve, log, update stats."""
 import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import Forbidden
 
 from bot import config
-from bot.database import get_welcome_messages_ordered, increment_join_requests, upsert_user
-from bot.handlers.admin import send_welcome_message
+from bot.database import increment_join_requests
+from bot.handlers.admin import send_welcome_flow
 from bot.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """On channel join request: send welcome messages, log, update stats. Do NOT approve."""
+    """On channel join request: send welcome (Hi {name} + video + APK), log, update stats. Do NOT approve."""
     req = update.chat_join_request
     if not req:
         return
@@ -21,6 +21,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     user_id = req.from_user.id if req.from_user else 0
+    name = (req.from_user.first_name or "User") if req.from_user else "User"
     try:
         await increment_join_requests(user_id)
     except Exception as e:
@@ -28,18 +29,14 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     logger.info("Join request from user_id=%s", user_id)
 
-    messages = await get_welcome_messages_ordered()
-    for m in messages:
-        try:
-            await send_welcome_message(context, user_id, m)
-            await asyncio.sleep(0.25)
-        except Forbidden:
-            logger.info("User %s has not started bot or blocked bot; skip sending", user_id)
-            break
-        except Exception as e:
-            logger.exception("Welcome send to %s: %s", user_id, e)
+    try:
+        await send_welcome_flow(context, user_id, name=name)
+    except Forbidden:
+        logger.info("User %s has not started bot or blocked bot; skip sending", user_id)
+    except Exception as e:
+        logger.exception("Welcome send to %s: %s", user_id, e)
 
-    # Do NOT call approve_chat_join_request - per requirements
+    # Do NOT call approve_chat_join_request
 
 
 def register_join_request(app) -> None:

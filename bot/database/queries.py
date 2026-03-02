@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS broadcast_history (
     failed_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_broadcast_history_sent_at ON broadcast_history(sent_at);
+
+CREATE TABLE IF NOT EXISTS welcome_config (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    video_file_id VARCHAR(255),
+    video_caption TEXT,
+    apk_file_id VARCHAR(255),
+    apk_caption TEXT
+);
+INSERT INTO welcome_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 """
 
 
@@ -111,100 +120,38 @@ async def get_user_stats() -> dict:
     }
 
 
-# --- Welcome messages ---
-async def get_welcome_messages_ordered() -> List[dict]:
+# --- Welcome config (single row: video + APK with captions) ---
+DEFAULT_WELCOME_TEXT = "Hi {name} 👋\n\nTumhari Join Request APPROVE ho gayi ✅🔥\n\nSetup Video & APK niche diya hai 👇"
+
+
+async def get_welcome_config() -> dict:
+    """Returns dict with video_file_id, video_caption, apk_file_id, apk_caption (all optional)."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, type, file_id, text, caption, position, created_at FROM welcome_messages ORDER BY position, id"
-        )
-        return [dict(r) for r in rows]
+        row = await conn.fetchrow("SELECT video_file_id, video_caption, apk_file_id, apk_caption FROM welcome_config WHERE id = 1")
+        if row is None:
+            return {"video_file_id": None, "video_caption": None, "apk_file_id": None, "apk_caption": None}
+        return dict(row)
 
 
-async def get_welcome_message_by_id(msg_id: int) -> Optional[dict]:
+async def set_welcome_video(file_id: str, caption: Optional[str] = None) -> None:
     pool = get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT id, type, file_id, text, caption, position FROM welcome_messages WHERE id = $1",
-            msg_id,
-        )
-        return dict(row) if row else None
-
-
-async def get_welcome_count() -> int:
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval("SELECT COUNT(*) FROM welcome_messages") or 0
-
-
-async def add_welcome_message(
-    msg_type: str,
-    file_id: Optional[str],
-    text: Optional[str],
-    caption: Optional[str],
-) -> int:
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        max_pos = await conn.fetchval("SELECT COALESCE(MAX(position), -1) FROM welcome_messages")
-        new_pos = (max_pos or -1) + 1
-        return await conn.fetchval(
-            """
-            INSERT INTO welcome_messages (type, file_id, text, caption, position)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            """,
-            msg_type,
+        await conn.execute(
+            "UPDATE welcome_config SET video_file_id = $1, video_caption = $2 WHERE id = 1",
             file_id,
-            text or "",
             caption or "",
-            new_pos,
         )
 
 
-async def delete_welcome_message(msg_id: int) -> bool:
+async def set_welcome_apk(file_id: str, caption: Optional[str] = None) -> None:
     pool = get_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM welcome_messages WHERE id = $1", msg_id)
-        return result == "DELETE 1"
-
-
-async def reorder_welcome_message(msg_id: int, new_position: int) -> bool:
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE welcome_messages SET position = $1 WHERE id = $2", new_position, msg_id)
-        return True
-
-
-async def move_welcome_message_up(msg_id: int) -> bool:
-    """Swap position with the message above. Returns True if moved."""
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT id, position FROM welcome_messages WHERE id = $1", msg_id)
-        if not row:
-            return False
-        pos = row["position"]
-        other = await conn.fetchrow("SELECT id, position FROM welcome_messages WHERE position < $1 ORDER BY position DESC LIMIT 1", pos)
-        if not other:
-            return False
-        await conn.execute("UPDATE welcome_messages SET position = $1 WHERE id = $2", other["position"], msg_id)
-        await conn.execute("UPDATE welcome_messages SET position = $1 WHERE id = $2", pos, other["id"])
-        return True
-
-
-async def move_welcome_message_down(msg_id: int) -> bool:
-    """Swap position with the message below. Returns True if moved."""
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT id, position FROM welcome_messages WHERE id = $1", msg_id)
-        if not row:
-            return False
-        pos = row["position"]
-        other = await conn.fetchrow("SELECT id, position FROM welcome_messages WHERE position > $1 ORDER BY position ASC LIMIT 1", pos)
-        if not other:
-            return False
-        await conn.execute("UPDATE welcome_messages SET position = $1 WHERE id = $2", other["position"], msg_id)
-        await conn.execute("UPDATE welcome_messages SET position = $1 WHERE id = $2", pos, other["id"])
-        return True
+        await conn.execute(
+            "UPDATE welcome_config SET apk_file_id = $1, apk_caption = $2 WHERE id = 1",
+            file_id,
+            caption or "",
+        )
 
 
 # --- Broadcast history ---
