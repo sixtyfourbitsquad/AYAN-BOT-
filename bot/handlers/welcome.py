@@ -107,10 +107,19 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
 
 def register_welcome(app) -> None:
     from telegram.ext import MessageHandler, filters
-    # VIDEO, Document, or TEXT (for /cancel)
+    # Any media type plus TEXT (for /cancel) while in welcome/extra states
     app.add_handler(
         MessageHandler(
-            filters.ChatType.PRIVATE & (filters.VIDEO | filters.Document.ALL | filters.TEXT),
+            filters.ChatType.PRIVATE
+            & (
+                filters.TEXT
+                | filters.PHOTO
+                | filters.VIDEO
+                | filters.ANIMATION
+                | filters.Document.ALL
+                | filters.AUDIO
+                | filters.VOICE
+            ),
             capture_message_for_welcome,
         ),
         group=-1,
