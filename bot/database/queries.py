@@ -128,9 +128,16 @@ async def get_welcome_config() -> dict:
     """Returns dict with video_file_id, video_caption, apk_file_id, apk_caption (all optional)."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT video_file_id, video_caption, apk_file_id, apk_caption FROM welcome_config WHERE id = 1")
+        row = await conn.fetchrow(
+            "SELECT video_file_id, video_caption, apk_file_id, apk_caption FROM welcome_config WHERE id = 1"
+        )
         if row is None:
-            return {"video_file_id": None, "video_caption": None, "apk_file_id": None, "apk_caption": None}
+            return {
+                "video_file_id": None,
+                "video_caption": None,
+                "apk_file_id": None,
+                "apk_caption": None,
+            }
         return dict(row)
 
 
@@ -152,6 +159,47 @@ async def set_welcome_apk(file_id: str, caption: Optional[str] = None) -> None:
             file_id,
             caption or "",
         )
+
+
+# --- Extra welcome messages (optional, sent after default video+APK) ---
+async def get_extra_messages() -> List[dict]:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, type, file_id, text, caption, position FROM welcome_messages ORDER BY position, id"
+        )
+        return [dict(r) for r in rows]
+
+
+async def add_extra_message(
+    msg_type: str,
+    file_id: Optional[str],
+    text: Optional[str],
+    caption: Optional[str],
+) -> int:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        max_pos = await conn.fetchval("SELECT COALESCE(MAX(position), -1) FROM welcome_messages")
+        new_pos = (max_pos or -1) + 1
+        return await conn.fetchval(
+            """
+            INSERT INTO welcome_messages (type, file_id, text, caption, position)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            """,
+            msg_type,
+            file_id,
+            text or "",
+            caption or "",
+            new_pos,
+        )
+
+
+async def delete_extra_message(msg_id: int) -> bool:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM welcome_messages WHERE id = $1", msg_id)
+        return result == "DELETE 1"
 
 
 # --- Broadcast history ---

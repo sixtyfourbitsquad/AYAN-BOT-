@@ -1,19 +1,18 @@
-"""Chat join request: send default welcome (text + video + APK), do NOT approve, log, update stats."""
-import asyncio
+"""Chat join request: send full welcome (default + extra messages), do NOT approve, log, update stats."""
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import Forbidden
 
 from bot import config
 from bot.database import increment_join_requests
-from bot.handlers.admin import send_welcome_flow
+from bot.handlers.admin import send_full_welcome
 from bot.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """On channel join request: send welcome (Hi {name} + video + APK), log, update stats. Do NOT approve."""
+    """On channel join request: send full welcome (Hi {name} + video + APK + extras), log, update stats. Do NOT approve."""
     req = update.chat_join_request
     if not req:
         return
@@ -30,7 +29,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     logger.info("Join request from user_id=%s", user_id)
 
     try:
-        await send_welcome_flow(context, user_id, name=name)
+        await send_full_welcome(context, user_id, name=name)
     except Forbidden:
         logger.info("User %s has not started bot or blocked bot; skip sending", user_id)
     except Exception as e:

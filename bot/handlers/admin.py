@@ -9,6 +9,8 @@ from bot import config
 from bot.database import (
     get_user_stats,
     get_welcome_config,
+    get_extra_messages,
+    delete_extra_message,
     get_pool,
     DEFAULT_WELCOME_TEXT,
 )
@@ -59,11 +61,33 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    if data == "admin:add_extra":
+        await set_admin_state(user_id, "extra:add")
+        await query.edit_message_text(
+            "➕ Send the extra welcome message now (text, photo, video, GIF, document, audio, or voice).\nSend /cancel to abort.",
+            reply_markup=back_to_admin_keyboard(),
+        )
+        return
+
+    if data == "admin:manage_extra":
+        extras = await get_extra_messages()
+        if not extras:
+            await query.edit_message_text(
+                "No extra welcome messages yet.",
+                reply_markup=back_to_admin_keyboard(),
+            )
+            return
+        await query.edit_message_text(
+            "Extra welcome messages (tap 🗑 to delete):",
+            reply_markup=extra_list_keyboard(extras),
+        )
+        return
+
     if data == "admin:preview_welcome":
         await query.edit_message_text("Sending preview...")
         chat_id = query.message.chat_id if query.message else 0
         try:
-            await send_welcome_flow(context, chat_id, name="Admin")
+            await send_full_welcome(context, chat_id, name="Admin")
             await context.bot.send_message(
                 chat_id,
                 "✅ Preview done.",
@@ -175,6 +199,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
 
+def extra_list_keyboard(messages: list) -> InlineKeyboardMarkup:
+    """Build keyboard to manage extra messages (delete only)."""
+    rows = []
+    for idx, m in enumerate(messages, start=1):
+        label = f"#{idx} {m.get('type', 'text')}"
+        rows.append(
+            [
+                InlineKeyboardButton(label, callback_data="noop"),
+                InlineKeyboardButton("🗑", callback_data=f"extra:del:{m['id']}"),
+            ]
+        )
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data="admin:main")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def send_welcome_flow(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
     """Send default welcome: text (with name) + video (if set) + APK (if set)."""
     from bot.database import get_welcome_config, DEFAULT_WELCOME_TEXT
@@ -198,6 +237,77 @@ async def send_welcome_flow(context: ContextTypes.DEFAULT_TYPE, chat_id: int, na
         )
 
 
+async def send_extra_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """Send all extra welcome messages in order."""
+    from bot.database import get_extra_messages
+
+    bot = context.bot
+    extras = await get_extra_messages()
+    for m in extras:
+        t = m.get("type", "text")
+        file_id = m.get("file_id")
+        text = m.get("text") or ""
+        caption = m.get("caption") or ""
+        try:
+            if t == "text":
+                await bot.send_message(chat_id, text or "(empty)")
+            elif t == "photo":
+                await bot.send_photo(chat_id, file_id, caption=caption or None)
+            elif t == "video":
+                await bot.send_video(chat_id, file_id, caption=caption or None)
+            elif t == "animation":
+                await bot.send_animation(chat_id, file_id, caption=caption or None)
+            elif t == "document":
+                await bot.send_document(chat_id, file_id, caption=caption or None)
+            elif t == "audio":
+                await bot.send_audio(chat_id, file_id, caption=caption or None)
+            elif t == "voice":
+                await bot.send_voice(chat_id, file_id, caption=caption or None)
+            else:
+                await bot.send_message(chat_id, text or "(unknown type)")
+        except Exception as e:
+            logger.exception("send_extra_messages error: %s", e)
+        await asyncio.sleep(0.25)
+
+
+async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
+    """Default text+video+APK plus extra messages."""
+    await send_welcome_flow(context, chat_id, name=name)
+    await send_extra_messages(context, chat_id)
+
+
+async def handle_extra_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle extra:del:* callback buttons."""
+    query = update.callback_query
+    if not query or not query.data or not query.data.startswith("extra:"):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    if not _is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    data = query.data
+    if data.startswith("extra:del:"):
+        try:
+            msg_id = int(data.split(":")[-1])
+        except ValueError:
+            await query.answer("Invalid id.", show_alert=True)
+            return
+        ok = await delete_extra_message(msg_id)
+        await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
+        extras = await get_extra_messages()
+        if not extras:
+            await query.edit_message_text(
+                "No extra welcome messages left.",
+                reply_markup=back_to_admin_keyboard(),
+            )
+        else:
+            await query.edit_message_text(
+                "Extra welcome messages (tap 🗑 to delete):",
+                reply_markup=extra_list_keyboard(extras),
+            )
+
+
 def register_admin(app) -> None:
     from telegram.ext import CallbackQueryHandler
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin:"))
+    app.add_handler(CallbackQueryHandler(handle_extra_callbacks, pattern="^extra:"))

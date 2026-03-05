@@ -4,6 +4,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add Extra Message", callback_data="admin:add_extra")],
+        [InlineKeyboardButton("📂 Manage Extra Messages", callback_data="admin:manage_extra")],
         [InlineKeyboardButton("📹 Set Welcome Video", callback_data="admin:set_video")],
         [InlineKeyboardButton("📦 Set Welcome APK", callback_data="admin:set_apk")],
         [InlineKeyboardButton("🔍 Preview Welcome", callback_data="admin:preview_welcome")],

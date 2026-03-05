@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQ
 from bot import config
 from bot.database import upsert_user
 from bot.keyboards import admin_main_keyboard
+from bot.handlers.admin import send_full_welcome
 from bot.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,7 +38,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=admin_main_keyboard(),
         )
     else:
-        await update.message.reply_text("👋 Hello! Use this bot to get access to the channel.")
+        # Non-admin users get the same welcome flow as channel join requests
+        name = user.first_name or "User"
+        await send_full_welcome(context, user_id, name=name)
 
 
 async def _callback_update_seen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
