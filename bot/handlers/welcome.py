@@ -107,7 +107,8 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
 
 def register_welcome(app) -> None:
     from telegram.ext import MessageHandler, filters
-    # Any media type plus TEXT (for /cancel) while in welcome/extra states
+    # Any media type plus TEXT (for /cancel) while in welcome/extra states.
+    # Use group -2 so broadcast capture (group -1) can still see messages.
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE
@@ -122,5 +123,5 @@ def register_welcome(app) -> None:
             ),
             capture_message_for_welcome,
         ),
-        group=-1,
+        group=-2,
     )
