@@ -35,9 +35,19 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
         if not msg:
             return
         channel_id = None
-        if msg.forward_from_chat and getattr(msg.forward_from_chat, "type", None) == "channel":
-            channel_id = msg.forward_from_chat.id
-        elif msg.text:
+        # Forwarded channel message support across PTB versions:
+        # - Older: Message.forward_from_chat
+        # - Newer: Message.forward_origin.{chat|sender_chat}
+        fwd_chat = getattr(msg, "forward_from_chat", None)
+        if fwd_chat and getattr(fwd_chat, "type", None) == "channel":
+            channel_id = getattr(fwd_chat, "id", None)
+        if channel_id is None:
+            origin = getattr(msg, "forward_origin", None)
+            if origin:
+                origin_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
+                if origin_chat and getattr(origin_chat, "type", None) == "channel":
+                    channel_id = getattr(origin_chat, "id", None)
+        if channel_id is None and msg.text:
             text = msg.text.strip()
             try:
                 channel_id = int(text)

@@ -10,10 +10,10 @@ This guide walks you through deploying **two separate Telegram bots** (one per c
 
 | You must do yourself | Why the guide can’t do it |
 |----------------------|---------------------------|
-| **Use your real values** | Replace `bot1.yourdomain.com`, passwords, `BOT_TOKEN`, `ADMIN_IDS`, etc. with your actual data. Wrong token or typo = bot won’t work. |
+| **Use your real values** | Replace passwords, `BOT_TOKEN`, `ADMIN_IDS`, etc. with your actual data. This guide uses `ayanbot1.duckdns.org` and `ayanbot2.duckdns.org` as webhook domains. Wrong token or typo = bot won’t work. |
 | **Get tokens and IDs** | Create each bot in [@BotFather](https://t.me/BotFather), get the token. Get your Telegram user ID (e.g. [@userinfobot](https://t.me/userinfobot)) for `ADMIN_IDS`. |
-| **Fix paths/user if different** | Guide uses `deploy` and `/home/deploy/`. If your user is `adii` or project is elsewhere, change those in commands, `.env`, and systemd files. |
-| **Wait for DNS** | After adding A records, wait 5–30 min (sometimes hours). Run `ping bot1.yourdomain.com` until it shows your VPS IP. |
+| **Fix paths/user if different** | Guide uses user `adii` and `/home/adii/`. If your Linux user or project path is different, change `User`, `WorkingDirectory`, and `ExecStart` in the systemd service file. |
+| **Wait for DNS** | After adding A records (or DuckDNS), wait until domains resolve. Run `ping ayanbot1.duckdns.org` (and ayanbot2) until they show your VPS IP. |
 | **Check one thing if it fails** | If the bot doesn’t start or doesn’t reply, use Section 5 (troubleshooting): `systemctl status`, `journalctl`, and the table there. |
 
 If you do the above, the rest is copy-paste and following the order. No coding or “brain” needed beyond reading and replacing placeholders.
@@ -21,7 +21,7 @@ If you do the above, the rest is copy-paste and following the order. No coding o
 **Before you start – have these ready:**
 
 - [ ] VPS IP and SSH access (user + password or SSH key)
-- [ ] Two domains or subdomains for the two bots (e.g. `bot1.domain.com`, `bot2.domain.com`)
+- [ ] Two webhook domains: `ayanbot1.duckdns.org` and `ayanbot2.duckdns.org` (DuckDNS or DNS pointed to your VPS IP)
 - [ ] Bot 1 token from BotFather and Bot 2 token from BotFather (or create two bots)
 - [ ] Your Telegram user ID (and any other admins) for `ADMIN_IDS`
 - [ ] Two strong passwords for the two PostgreSQL users (Bot 1 and Bot 2)
@@ -61,14 +61,14 @@ Do this **once** per VPS. If you already have a server with Nginx, PostgreSQL, R
 ### 2.1 Server and access
 
 - **VPS**: Ubuntu 22.04 LTS (or 24.04). Minimum 2 vCPU, 4 GB RAM; recommended 4 vCPU, 8 GB RAM for two bots.
-- **User**: Create a non-root user (e.g. `deploy`) with sudo.
+- **User**: Create a non-root user (e.g. `adii`) with sudo.
 - **Firewall**: Allow SSH (22), HTTP (80), HTTPS (443).
 
 Detailed steps (create VPS, SSH, create user, firewall): see **VPS_HOSTING_GUIDE.md** → Part A (Steps 1–7).
 
 ### 2.2 Install software (once per server)
 
-As your deploy user (or root):
+As your user (e.g. `adii`) or root:
 
 ```bash
 sudo apt update && sudo apt upgrade -y
@@ -86,12 +86,12 @@ See **VPS_HOSTING_GUIDE.md** → Part B (Steps 8–10) for PostgreSQL and Redis 
 
 You need **two webhook URLs** (Telegram requires a unique URL per bot):
 
-| Bot   | Example domain       | Purpose                    |
-|-------|----------------------|----------------------------|
-| Bot 1 | `bot1.yourdomain.com` or `client1-bot.com` | Webhook for Client 1’s bot |
-| Bot 2 | `bot2.yourdomain.com` or `client2-bot.com` | Webhook for Client 2’s bot |
+| Bot   | Webhook domain           | Purpose                    |
+|-------|--------------------------|----------------------------|
+| Bot 1 | `ayanbot1.duckdns.org`   | Webhook for Client 1’s bot |
+| Bot 2 | `ayanbot2.duckdns.org`   | Webhook for Client 2’s bot |
 
-In your DNS provider, add **A records** for both hostnames pointing to your **VPS IP**. Wait until they resolve (e.g. `ping bot1.yourdomain.com`).
+Point both hostnames to your **VPS IP** (e.g. DuckDNS “IP” field, or A records in your DNS). Wait until they resolve (e.g. `ping ayanbot1.duckdns.org`).
 
 ---
 
@@ -170,13 +170,13 @@ ADMIN_IDS=111111111,222222222
 DATABASE_URL=postgresql://bot1user:StrongPasswordForBot1@localhost:5432/telegram_bot_client1
 REDIS_URL=redis://localhost:6379/0
 
-WEBHOOK_URL=https://bot1.yourdomain.com
+WEBHOOK_URL=https://ayanbot1.duckdns.org
 WEBHOOK_PATH=webhook
 WEBHOOK_HOST=127.0.0.1
 WEBHOOK_PORT=8080
 ```
 
-Save (Ctrl+O, Enter, Ctrl+X). Replace `bot1.yourdomain.com` with Bot 1’s real domain.
+Save (Ctrl+O, Enter, Ctrl+X).
 
 ---
 
@@ -202,12 +202,12 @@ psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/003_channel_
 sudo nano /etc/nginx/sites-available/telegram-bot-client1
 ```
 
-Paste (replace `bot1.yourdomain.com` with Bot 1’s domain):
+Paste:
 
 ```nginx
 server {
     listen 80;
-    server_name bot1.yourdomain.com;
+    server_name ayanbot1.duckdns.org;
 
     location /webhook {
         proxy_pass http://127.0.0.1:8080;
@@ -233,7 +233,7 @@ sudo systemctl reload nginx
 ### Step 3.7 SSL for Bot 1 domain
 
 ```bash
-sudo certbot --nginx -d bot1.yourdomain.com
+sudo certbot --nginx -d ayanbot1.duckdns.org
 ```
 
 Choose redirect HTTP → HTTPS when asked.
@@ -246,7 +246,7 @@ Choose redirect HTTP → HTTPS when asked.
 sudo nano /etc/systemd/system/telegram-bot-client1.service
 ```
 
-Paste (adjust `deploy` and path if your user/home differ):
+Paste (if your user is not `adii` or project is not in `~/telegram-bot-client1`, change `User`, `WorkingDirectory`, and `ExecStart` accordingly):
 
 ```ini
 [Unit]
@@ -255,11 +255,11 @@ After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=deploy
-Group=deploy
-WorkingDirectory=/home/deploy/telegram-bot-client1
-Environment="PATH=/home/deploy/telegram-bot-client1/venv/bin"
-ExecStart=/home/deploy/telegram-bot-client1/venv/bin/python -m bot.main
+User=adii
+Group=adii
+WorkingDirectory=/home/adii/telegram-bot-client1
+Environment="PATH=/home/adii/telegram-bot-client1/venv/bin"
+ExecStart=/home/adii/telegram-bot-client1/venv/bin/python -m bot.main
 Restart=always
 RestartSec=10
 
@@ -284,7 +284,7 @@ Logs: `sudo journalctl -u telegram-bot-client1 -f`
 
 1. **Webhook:**  
    `curl "https://api.telegram.org/bot<BOT1_TOKEN>/getWebhookInfo"`  
-   Should show `"url":"https://bot1.yourdomain.com/webhook"`.
+   Should show `"url":"https://ayanbot1.duckdns.org/webhook"`.
 
 2. **Telegram:** Open Client 1’s bot → `/start` → Admin panel (if your ID is in `ADMIN_IDS`).
 
@@ -356,7 +356,7 @@ ADMIN_IDS=333333333,444444444
 DATABASE_URL=postgresql://bot2user:StrongPasswordForBot2@localhost:5432/telegram_bot_client2
 REDIS_URL=redis://localhost:6379/1
 
-WEBHOOK_URL=https://bot2.yourdomain.com
+WEBHOOK_URL=https://ayanbot2.duckdns.org
 WEBHOOK_PATH=webhook
 WEBHOOK_HOST=127.0.0.1
 WEBHOOK_PORT=8081
@@ -387,7 +387,7 @@ sudo nano /etc/nginx/sites-available/telegram-bot-client2
 ```nginx
 server {
     listen 80;
-    server_name bot2.yourdomain.com;
+    server_name ayanbot2.duckdns.org;
 
     location /webhook {
         proxy_pass http://127.0.0.1:8081;
@@ -413,7 +413,7 @@ sudo systemctl reload nginx
 ### Step 4.7 SSL for Bot 2
 
 ```bash
-sudo certbot --nginx -d bot2.yourdomain.com
+sudo certbot --nginx -d ayanbot2.duckdns.org
 ```
 
 ---
@@ -431,11 +431,11 @@ After=network.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
-User=deploy
-Group=deploy
-WorkingDirectory=/home/deploy/telegram-bot-client2
-Environment="PATH=/home/deploy/telegram-bot-client2/venv/bin"
-ExecStart=/home/deploy/telegram-bot-client2/venv/bin/python -m bot.main
+User=adii
+Group=adii
+WorkingDirectory=/home/adii/telegram-bot-client2
+Environment="PATH=/home/adii/telegram-bot-client2/venv/bin"
+ExecStart=/home/adii/telegram-bot-client2/venv/bin/python -m bot.main
 Restart=always
 RestartSec=10
 
@@ -456,7 +456,7 @@ sudo systemctl status telegram-bot-client2
 
 ### Step 4.9 Verify Bot 2
 
-- Webhook: `curl "https://api.telegram.org/bot<BOT2_TOKEN>/getWebhookInfo"` → `https://bot2.yourdomain.com/webhook`
+- Webhook: `curl "https://api.telegram.org/bot<BOT2_TOKEN>/getWebhookInfo"` → `https://ayanbot2.duckdns.org/webhook`
 - Telegram: Client 2’s bot → `/start` → Admin panel and Config.
 
 Both bots are now running independently on the same VPS.

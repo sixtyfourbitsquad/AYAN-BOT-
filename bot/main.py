@@ -54,9 +54,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.exception("Update %s caused error: %s", update, context.error)
     if update and isinstance(update, Update) and update.effective_message:
         try:
-            await update.effective_message.reply_text(
-                "An error occurred. Please try again or contact the admin."
-            )
+            user_id = update.effective_user.id if update.effective_user else 0
+            if user_id in config.ADMIN_IDS:
+                detail = str(context.error) if context.error else "Unknown error"
+                if len(detail) > 3000:
+                    detail = detail[-3000:]
+                await update.effective_message.reply_text(
+                    f"⚠️ Error:\n{detail}\n\nCheck Admin → View Logs for details."
+                )
+            else:
+                await update.effective_message.reply_text(
+                    "An error occurred. Please try again or contact the admin."
+                )
         except Exception:
             pass
 
