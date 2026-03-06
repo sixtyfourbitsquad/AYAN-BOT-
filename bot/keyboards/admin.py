@@ -6,6 +6,8 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add Welcome Message", callback_data="admin:add_welcome")],
         [InlineKeyboardButton("📂 Manage Welcome Messages", callback_data="admin:manage_welcome")],
+        [InlineKeyboardButton("⭐ Add Premium Message", callback_data="admin:add_premium")],
+        [InlineKeyboardButton("📂 Manage Premium Messages", callback_data="admin:manage_premium")],
         [InlineKeyboardButton("📺 Set Channel", callback_data="admin:set_channel")],
         [InlineKeyboardButton("🔍 Preview Welcome", callback_data="admin:preview_welcome")],
         [InlineKeyboardButton("📊 User Stats", callback_data="admin:stats")],

@@ -11,6 +11,8 @@ from bot.database import (
     get_channel_id,
     get_welcome_messages,
     delete_welcome_message,
+    get_premium_messages,
+    delete_premium_message,
     get_pool,
 )
 from bot.redis_client import get_redis, set_admin_state, get_admin_state, clear_admin_state
@@ -55,6 +57,34 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "Send /cancel to cancel.",
             reply_markup=back_to_admin_keyboard(),
             parse_mode="Markdown",
+        )
+        return
+
+    if data == "admin:add_premium":
+        await set_admin_state(user_id, "premium:add")
+        await query.edit_message_text(
+            "⭐ **Add premium messages** (sent after welcome)\n\n"
+            "• Send or forward one or more messages — each will be added in order.\n"
+            "• Types: text, photo, video, GIF, document, audio, voice.\n"
+            "• Use {name} in text/caption for the user's name.\n\n"
+            "When finished: send /done or tap « Done adding ».\n"
+            "Send /cancel to cancel.",
+            reply_markup=back_to_admin_keyboard(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data == "admin:manage_premium":
+        messages = await get_premium_messages()
+        if not messages:
+            await query.edit_message_text(
+                "No premium messages yet. Add some with « Add Premium Message ».",
+                reply_markup=back_to_admin_keyboard(),
+            )
+            return
+        await query.edit_message_text(
+            "Premium messages (tap 🗑 to delete):",
+            reply_markup=premium_list_keyboard(messages),
         )
         return
 
@@ -156,11 +186,12 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         channel_display = f"`{channel_id}`" if channel_id is not None else "_Not set (set via Admin → Set Channel)_"
         stats = await get_user_stats()
         welcome_count = len(await get_welcome_messages())
+        premium_count = len(await get_premium_messages())
         text = (
             f"⚙ **Bot Configuration**\n\n"
             f"Uptime: {uptime}\n"
             f"Total users: {stats['total_users']}\n"
-            f"Welcome messages: {welcome_count}\n"
+            f"Welcome messages: {welcome_count} | Premium: {premium_count}\n"
             f"Channel ID: {channel_display}\n"
             f"Admin IDs: `{config.ADMIN_IDS}`\n\n"
             f"DB: {db_status}\n"
@@ -218,6 +249,21 @@ def welcome_list_keyboard(messages: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def premium_list_keyboard(messages: list) -> InlineKeyboardMarkup:
+    """Build keyboard to manage premium messages (delete only)."""
+    rows = []
+    for idx, m in enumerate(messages, start=1):
+        label = f"#{idx} {m.get('type', 'text')}"
+        rows.append(
+            [
+                InlineKeyboardButton(label, callback_data="noop"),
+                InlineKeyboardButton("🗑", callback_data=f"premium:del:{m['id']}"),
+            ]
+        )
+    rows.append([InlineKeyboardButton("◀️ Back", callback_data="admin:main")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _apply_name(text: str | None, name: str) -> str:
     """Replace {name} in text. name is already sanitized (e.g. 'User')."""
     if not text:
@@ -225,23 +271,18 @@ def _apply_name(text: str | None, name: str) -> str:
     return text.replace("{name}", name or "User")
 
 
-async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
-    """Send all welcome messages in order. Replaces {name} in text and captions."""
-    from bot.database import get_welcome_messages
-
-    bot = context.bot
-    messages = await get_welcome_messages()
-    if not messages:
-        try:
-            await bot.send_message(chat_id, "Welcome! No messages configured yet.")
-        except Exception as e:
-            logger.exception("send_full_welcome (empty): %s", e)
-        return
+async def _send_message_list(
+    bot, chat_id: int, messages: list, name: str, log_prefix: str = "send"
+) -> None:
+    """Send a list of messages (welcome or premium). Replaces {name} in text/captions."""
     for m in messages:
         t = m.get("type", "text")
         file_id = m.get("file_id")
         text = _apply_name(m.get("text"), name)
         caption = _apply_name(m.get("caption"), name)
+        # Telegram caption limit 1024; truncate to avoid API error
+        if caption and len(caption) > 1024:
+            caption = caption[:1021] + "..."
         try:
             if t == "text":
                 await bot.send_message(chat_id, text or "(empty)")
@@ -260,8 +301,27 @@ async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, na
             else:
                 await bot.send_message(chat_id, text or "(unknown type)")
         except Exception as e:
-            logger.exception("send_full_welcome error: %s", e)
+            logger.exception("%s error: %s", log_prefix, e)
         await asyncio.sleep(0.25)
+
+
+async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
+    """Send all welcome messages, then all premium messages. Replaces {name} in text and captions."""
+    from bot.database import get_welcome_messages, get_premium_messages
+
+    bot = context.bot
+    welcome = await get_welcome_messages()
+    premium = await get_premium_messages()
+    if not welcome and not premium:
+        try:
+            await bot.send_message(chat_id, "Welcome! No messages configured yet.")
+        except Exception as e:
+            logger.exception("send_full_welcome (empty): %s", e)
+        return
+    if welcome:
+        await _send_message_list(bot, chat_id, welcome, name, "welcome")
+    if premium:
+        await _send_message_list(bot, chat_id, premium, name, "premium")
 
 
 async def handle_welcome_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -303,7 +363,47 @@ async def handle_welcome_callbacks(update: Update, context: ContextTypes.DEFAULT
             )
 
 
+async def handle_premium_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle premium:done and premium:del:* callback buttons."""
+    query = update.callback_query
+    if not query or not query.data or not query.data.startswith("premium:"):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    if not _is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    data = query.data
+    if data == "premium:done":
+        await query.answer()
+        await clear_admin_state(user_id)
+        await query.edit_message_text(
+            "Done adding premium messages.",
+            reply_markup=back_to_admin_keyboard(),
+        )
+        return
+    if data.startswith("premium:del:"):
+        try:
+            msg_id = int(data.split(":")[-1])
+        except ValueError:
+            await query.answer("Invalid id.", show_alert=True)
+            return
+        ok = await delete_premium_message(msg_id)
+        await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
+        messages = await get_premium_messages()
+        if not messages:
+            await query.edit_message_text(
+                "No premium messages left.",
+                reply_markup=back_to_admin_keyboard(),
+            )
+        else:
+            await query.edit_message_text(
+                "Premium messages (tap 🗑 to delete):",
+                reply_markup=premium_list_keyboard(messages),
+            )
+
+
 def register_admin(app) -> None:
     from telegram.ext import CallbackQueryHandler
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin:"))
     app.add_handler(CallbackQueryHandler(handle_welcome_callbacks, pattern="^welcome:"))
+    app.add_handler(CallbackQueryHandler(handle_premium_callbacks, pattern="^premium:"))

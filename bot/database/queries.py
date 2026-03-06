@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS welcome_config (
 );
 INSERT INTO welcome_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 ALTER TABLE welcome_config ADD COLUMN IF NOT EXISTS channel_id BIGINT;
+
+CREATE TABLE IF NOT EXISTS premium_messages (
+    id SERIAL PRIMARY KEY,
+    type VARCHAR(20) NOT NULL,
+    file_id VARCHAR(255),
+    text TEXT,
+    caption TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_premium_messages_position ON premium_messages(position);
 """
 
 
@@ -178,6 +189,47 @@ async def delete_welcome_message(msg_id: int) -> bool:
     pool = get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("DELETE FROM welcome_messages WHERE id = $1", msg_id)
+        return result == "DELETE 1"
+
+
+# --- Premium messages (sent after welcome messages) ---
+async def get_premium_messages() -> List[dict]:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, type, file_id, text, caption, position FROM premium_messages ORDER BY position, id"
+        )
+        return [dict(r) for r in rows]
+
+
+async def add_premium_message(
+    msg_type: str,
+    file_id: Optional[str],
+    text: Optional[str],
+    caption: Optional[str],
+) -> int:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        max_pos = await conn.fetchval("SELECT COALESCE(MAX(position), -1) FROM premium_messages")
+        new_pos = (max_pos or -1) + 1
+        return await conn.fetchval(
+            """
+            INSERT INTO premium_messages (type, file_id, text, caption, position)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            """,
+            msg_type,
+            file_id,
+            text or "",
+            caption or "",
+            new_pos,
+        )
+
+
+async def delete_premium_message(msg_id: int) -> bool:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM premium_messages WHERE id = $1", msg_id)
         return result == "DELETE 1"
 
 

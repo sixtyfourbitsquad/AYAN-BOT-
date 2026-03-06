@@ -1,9 +1,9 @@
-"""Capture admin's welcome messages and channel setting (states: welcome:add, channel:wait)."""
+"""Capture admin's welcome, premium, and channel setting (states: welcome:add, premium:add, channel:wait)."""
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot import config
-from bot.database import set_channel_id, add_welcome_message
+from bot.database import set_channel_id, add_welcome_message, add_premium_message
 from bot.redis_client import get_admin_state, clear_admin_state
 from bot.keyboards import admin_main_keyboard, back_to_admin_keyboard
 from bot.utils.logging import get_logger
@@ -11,8 +11,42 @@ from bot.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _parse_message_content(msg) -> tuple:
+    """Return (msg_type, file_id, text, caption) or (None, None, None, None) if invalid."""
+    msg_type = "text"
+    file_id = None
+    text = None
+    caption = None
+    if msg.text and not (msg.photo or msg.video or msg.animation or msg.document or msg.audio or msg.voice):
+        msg_type = "text"
+        text = msg.text
+        return (msg_type, file_id, text, caption)
+    if msg.photo:
+        msg_type = "photo"
+        file_id = msg.photo[-1].file_id
+    elif msg.video:
+        msg_type = "video"
+        file_id = msg.video.file_id
+    elif msg.animation:
+        msg_type = "animation"
+        file_id = msg.animation.file_id
+    elif msg.document:
+        msg_type = "document"
+        file_id = msg.document.file_id
+    elif msg.audio:
+        msg_type = "audio"
+        file_id = msg.audio.file_id
+    elif msg.voice:
+        msg_type = "voice"
+        file_id = msg.voice.file_id
+    else:
+        return (None, None, None, None)
+    caption = (msg.caption or "").strip()
+    return (msg_type, file_id, text, caption)
+
+
 async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """When admin is in welcome:add or channel:wait, store the message or channel."""
+    """When admin is in welcome:add, premium:add, or channel:wait, store the message or channel."""
     user_id = update.effective_user.id if update.effective_user else 0
     if user_id not in config.ADMIN_IDS:
         return
@@ -26,9 +60,15 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
             await clear_admin_state(user_id)
             await update.message.reply_text("Cancelled.", reply_markup=admin_main_keyboard())
             return
-        if raw == "/done" and state == "welcome:add":
-            await clear_admin_state(user_id)
-            await update.message.reply_text("Done adding welcome messages.", reply_markup=admin_main_keyboard())
+        if raw == "/done":
+            if state == "welcome:add":
+                await clear_admin_state(user_id)
+                await update.message.reply_text("Done adding welcome messages.", reply_markup=admin_main_keyboard())
+            elif state == "premium:add":
+                await clear_admin_state(user_id)
+                await update.message.reply_text("Done adding premium messages.", reply_markup=admin_main_keyboard())
+            else:
+                return
             return
     if state == "channel:wait":
         msg = update.message
@@ -76,34 +116,8 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
         msg = update.message
         if not msg:
             return
-        msg_type = "text"
-        file_id = None
-        text = None
-        caption = None
-        if msg.text and not (msg.photo or msg.video or msg.animation or msg.document or msg.audio or msg.voice):
-            msg_type = "text"
-            text = msg.text
-        else:
-            if msg.photo:
-                msg_type = "photo"
-                file_id = msg.photo[-1].file_id
-            elif msg.video:
-                msg_type = "video"
-                file_id = msg.video.file_id
-            elif msg.animation:
-                msg_type = "animation"
-                file_id = msg.animation.file_id
-            elif msg.document:
-                msg_type = "document"
-                file_id = msg.document.file_id
-            elif msg.audio:
-                msg_type = "audio"
-                file_id = msg.audio.file_id
-            elif msg.voice:
-                msg_type = "voice"
-                file_id = msg.voice.file_id
-            caption = (msg.caption or "").strip()
-        if msg_type != "text" and not file_id:
+        msg_type, file_id, text, caption = _parse_message_content(msg)
+        if msg_type is None:
             await msg.reply_text("Send text or one media message (photo, video, GIF, document, audio, voice), or /cancel to abort.", reply_markup=back_to_admin_keyboard())
             return
         try:
@@ -119,6 +133,30 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
             )
         except Exception as e:
             logger.exception("add_welcome_message: %s", e)
+            await msg.reply_text(f"Error: {e}")
+        return
+
+    if state == "premium:add":
+        msg = update.message
+        if not msg:
+            return
+        msg_type, file_id, text, caption = _parse_message_content(msg)
+        if msg_type is None:
+            await msg.reply_text("Send text or one media message (photo, video, GIF, document, audio, voice), or /cancel to abort.", reply_markup=back_to_admin_keyboard())
+            return
+        try:
+            await add_premium_message(msg_type, file_id, text or "", caption)
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            done_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Done adding", callback_data="premium:done")],
+                [InlineKeyboardButton("◀️ Back to Admin", callback_data="admin:main")],
+            ])
+            await msg.reply_text(
+                f"✅ Premium added ({msg_type}). Send another to add more, or /done when finished.",
+                reply_markup=done_kb,
+            )
+        except Exception as e:
+            logger.exception("add_premium_message: %s", e)
             await msg.reply_text(f"Error: {e}")
         return
 

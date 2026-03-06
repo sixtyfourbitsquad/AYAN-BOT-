@@ -10,6 +10,9 @@ from bot.database.queries import (
     get_welcome_messages,
     add_welcome_message,
     delete_welcome_message,
+    get_premium_messages,
+    add_premium_message,
+    delete_premium_message,
     get_user_stats,
     log_broadcast,
 )
@@ -27,6 +30,9 @@ __all__ = [
     "get_welcome_messages",
     "add_welcome_message",
     "delete_welcome_message",
+    "get_premium_messages",
+    "add_premium_message",
+    "delete_premium_message",
     "get_user_stats",
     "log_broadcast",
 ]
