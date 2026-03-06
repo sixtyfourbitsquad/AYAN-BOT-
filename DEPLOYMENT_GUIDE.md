@@ -191,6 +191,7 @@ psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/001_initial.
 psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/002_welcome_config.sql
 psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/003_channel_id.sql
 psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/004_premium_messages.sql
+psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/005_copy_message_support.sql
 ```
 
 (Use the same password as in `DATABASE_URL`; you may set `PGPASSWORD=...` to avoid prompts.)
@@ -376,6 +377,7 @@ psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/001_initial.
 psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/002_welcome_config.sql
 psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/003_channel_id.sql
 psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/004_premium_messages.sql
+psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/005_copy_message_support.sql
 ```
 
 ---
@@ -515,14 +517,16 @@ pip install -r requirements.txt
 sudo systemctl restart telegram-bot-client2
 ```
 
-If there are new migration files (e.g. `migrations/004_premium_messages.sql`), run them for each database before or after restart:
+If there are new migration files (e.g. `004_premium_messages.sql`, `005_copy_message_support.sql`), run them for each database before or after restart:
 
 ```bash
 # Bot 1 DB (use Bot 1’s DB user and database from .env)
 psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/004_premium_messages.sql
+psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/005_copy_message_support.sql
 
 # Bot 2 DB
 psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/004_premium_messages.sql
+psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/005_copy_message_support.sql
 ```
 
 ### Common issues

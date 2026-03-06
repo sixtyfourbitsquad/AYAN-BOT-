@@ -274,13 +274,27 @@ def _apply_name(text: str | None, name: str) -> str:
 async def _send_message_list(
     bot, chat_id: int, messages: list, name: str, log_prefix: str = "send"
 ) -> None:
-    """Send a list of messages (welcome or premium). Replaces {name} in text/captions."""
+    """Send messages via copy_message when possible (preserves Premium/custom emojis); else reconstruct."""
     for m in messages:
+        copy_chat = m.get("copy_from_chat_id")
+        copy_msg_id = m.get("copy_from_message_id")
+        # Prefer copy_message to preserve custom emoji entities (avoids 🟥 placeholders)
+        if copy_chat is not None and copy_msg_id is not None:
+            try:
+                await bot.copy_message(
+                    chat_id=chat_id,
+                    from_chat_id=copy_chat,
+                    message_id=copy_msg_id,
+                )
+                await asyncio.sleep(0.25)
+                continue
+            except Exception as e:
+                logger.warning("%s copy_message fallback: %s", log_prefix, e)
+        # Fallback: reconstruct from stored text/file_id/caption (no custom emoji preservation)
         t = m.get("type", "text")
         file_id = m.get("file_id")
         text = _apply_name(m.get("text"), name)
         caption = _apply_name(m.get("caption"), name)
-        # Telegram caption limit 1024; truncate to avoid API error
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
         try:

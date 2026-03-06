@@ -121,7 +121,11 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
             await msg.reply_text("Send text or one media message (photo, video, GIF, document, audio, voice), or /cancel to abort.", reply_markup=back_to_admin_keyboard())
             return
         try:
-            await add_welcome_message(msg_type, file_id, text or "", caption)
+            await add_welcome_message(
+                msg_type, file_id, text or "", caption,
+                copy_from_chat_id=msg.chat.id,
+                copy_from_message_id=msg.message_id,
+            )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             done_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Done adding", callback_data="welcome:done")],
@@ -145,7 +149,11 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
             await msg.reply_text("Send text or one media message (photo, video, GIF, document, audio, voice), or /cancel to abort.", reply_markup=back_to_admin_keyboard())
             return
         try:
-            await add_premium_message(msg_type, file_id, text or "", caption)
+            await add_premium_message(
+                msg_type, file_id, text or "", caption,
+                copy_from_chat_id=msg.chat.id,
+                copy_from_message_id=msg.message_id,
+            )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             done_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Done adding", callback_data="premium:done")],

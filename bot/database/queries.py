@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS premium_messages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_premium_messages_position ON premium_messages(position);
+
+ALTER TABLE welcome_messages ADD COLUMN IF NOT EXISTS copy_from_chat_id BIGINT;
+ALTER TABLE welcome_messages ADD COLUMN IF NOT EXISTS copy_from_message_id INTEGER;
+ALTER TABLE premium_messages ADD COLUMN IF NOT EXISTS copy_from_chat_id BIGINT;
+ALTER TABLE premium_messages ADD COLUMN IF NOT EXISTS copy_from_message_id INTEGER;
 """
 
 
@@ -156,7 +161,9 @@ async def get_welcome_messages() -> List[dict]:
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, type, file_id, text, caption, position FROM welcome_messages ORDER BY position, id"
+            """SELECT id, type, file_id, text, caption, position,
+                      copy_from_chat_id, copy_from_message_id
+               FROM welcome_messages ORDER BY position, id"""
         )
         return [dict(r) for r in rows]
 
@@ -166,6 +173,8 @@ async def add_welcome_message(
     file_id: Optional[str],
     text: Optional[str],
     caption: Optional[str],
+    copy_from_chat_id: Optional[int] = None,
+    copy_from_message_id: Optional[int] = None,
 ) -> int:
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -173,8 +182,8 @@ async def add_welcome_message(
         new_pos = (max_pos or -1) + 1
         return await conn.fetchval(
             """
-            INSERT INTO welcome_messages (type, file_id, text, caption, position)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO welcome_messages (type, file_id, text, caption, position, copy_from_chat_id, copy_from_message_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
             """,
             msg_type,
@@ -182,6 +191,8 @@ async def add_welcome_message(
             text or "",
             caption or "",
             new_pos,
+            copy_from_chat_id,
+            copy_from_message_id,
         )
 
 
@@ -197,7 +208,9 @@ async def get_premium_messages() -> List[dict]:
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, type, file_id, text, caption, position FROM premium_messages ORDER BY position, id"
+            """SELECT id, type, file_id, text, caption, position,
+                      copy_from_chat_id, copy_from_message_id
+               FROM premium_messages ORDER BY position, id"""
         )
         return [dict(r) for r in rows]
 
@@ -207,6 +220,8 @@ async def add_premium_message(
     file_id: Optional[str],
     text: Optional[str],
     caption: Optional[str],
+    copy_from_chat_id: Optional[int] = None,
+    copy_from_message_id: Optional[int] = None,
 ) -> int:
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -214,8 +229,8 @@ async def add_premium_message(
         new_pos = (max_pos or -1) + 1
         return await conn.fetchval(
             """
-            INSERT INTO premium_messages (type, file_id, text, caption, position)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO premium_messages (type, file_id, text, caption, position, copy_from_chat_id, copy_from_message_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
             """,
             msg_type,
@@ -223,6 +238,8 @@ async def add_premium_message(
             text or "",
             caption or "",
             new_pos,
+            copy_from_chat_id,
+            copy_from_message_id,
         )
 
 
