@@ -2,6 +2,9 @@
 
 Production-grade Telegram bot with admin panel, welcome messages, broadcast, and webhook deployment.
 
+- **Single bot on a new VPS:** see **VPS_HOSTING_GUIDE.md** (full server setup + one bot).
+- **Two bots (two clients) on one VPS:** see **DEPLOYMENT_GUIDE.md** (step-by-step for both bots).
+
 ## Requirements
 
 - Python 3.10+

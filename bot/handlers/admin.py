@@ -8,11 +8,10 @@ from telegram.ext import ContextTypes
 from bot import config
 from bot.database import (
     get_user_stats,
-    get_welcome_config,
-    get_extra_messages,
-    delete_extra_message,
+    get_channel_id,
+    get_welcome_messages,
+    delete_welcome_message,
     get_pool,
-    DEFAULT_WELCOME_TEXT,
 )
 from bot.redis_client import get_redis, set_admin_state, get_admin_state, clear_admin_state
 from bot.keyboards import admin_main_keyboard, back_to_admin_keyboard
@@ -45,41 +44,43 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await clear_admin_state(user_id)
         return
 
-    if data == "admin:set_video":
-        await set_admin_state(user_id, "welcome:set_video")
+    if data == "admin:add_welcome":
+        await set_admin_state(user_id, "welcome:add")
         await query.edit_message_text(
-            "📹 Send the welcome video now. You can add a caption to the video.",
+            "➕ **Add welcome messages** (any type Telegram supports)\n\n"
+            "• Send or forward one or more messages — each will be added in order.\n"
+            "• Types: text, photo, video, GIF, document, audio, voice.\n"
+            "• Use {name} in text/caption for the user's name.\n\n"
+            "When finished: send /done or tap « Done adding » below.\n"
+            "Send /cancel to cancel.",
             reply_markup=back_to_admin_keyboard(),
+            parse_mode="Markdown",
         )
         return
 
-    if data == "admin:set_apk":
-        await set_admin_state(user_id, "welcome:set_apk")
+    if data == "admin:set_channel":
+        await set_admin_state(user_id, "channel:wait")
         await query.edit_message_text(
-            "📦 Send the APK file now. You can add a caption.",
+            "📺 **Set join-request channel**\n\n"
+            "• Forward any message from your channel here, or\n"
+            "• Send the channel ID (e.g. `-1001234567890`).\n\n"
+            "Send /cancel to abort.",
             reply_markup=back_to_admin_keyboard(),
+            parse_mode="Markdown",
         )
         return
 
-    if data == "admin:add_extra":
-        await set_admin_state(user_id, "extra:add")
-        await query.edit_message_text(
-            "➕ Send the extra welcome message now (text, photo, video, GIF, document, audio, or voice).\nSend /cancel to abort.",
-            reply_markup=back_to_admin_keyboard(),
-        )
-        return
-
-    if data == "admin:manage_extra":
-        extras = await get_extra_messages()
-        if not extras:
+    if data == "admin:manage_welcome":
+        messages = await get_welcome_messages()
+        if not messages:
             await query.edit_message_text(
-                "No extra welcome messages yet.",
+                "No welcome messages yet. Add some with « Add welcome message ».",
                 reply_markup=back_to_admin_keyboard(),
             )
             return
         await query.edit_message_text(
-            "Extra welcome messages (tap 🗑 to delete):",
-            reply_markup=extra_list_keyboard(extras),
+            "Welcome messages (tap 🗑 to delete):",
+            reply_markup=welcome_list_keyboard(messages),
         )
         return
 
@@ -149,16 +150,18 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             import time
             uptime = str(int(time.time() - context.bot_data["start_time"])) + "s"
 
-        cfg = await get_welcome_config()
-        video_set = "✅" if cfg.get("video_file_id") else "❌"
-        apk_set = "✅" if cfg.get("apk_file_id") else "❌"
+        channel_id = await get_channel_id()
+        if channel_id is None:
+            channel_id = config.CHANNEL_ID
+        channel_display = f"`{channel_id}`" if channel_id is not None else "_Not set (set via Admin → Set Channel)_"
         stats = await get_user_stats()
+        welcome_count = len(await get_welcome_messages())
         text = (
             f"⚙ **Bot Configuration**\n\n"
             f"Uptime: {uptime}\n"
             f"Total users: {stats['total_users']}\n"
-            f"Welcome video: {video_set} | APK: {apk_set}\n"
-            f"Channel ID: `{config.CHANNEL_ID}`\n"
+            f"Welcome messages: {welcome_count}\n"
+            f"Channel ID: {channel_display}\n"
             f"Admin IDs: `{config.ADMIN_IDS}`\n\n"
             f"DB: {db_status}\n"
             f"Redis: {redis_status}"
@@ -188,66 +191,57 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             reply_markup=back_to_admin_keyboard(),
         )
         try:
-            await context.bot.send_document(
-                chat_id=query.message.chat_id,
-                document=open(log_path, "rb"),
-                filename="bot.log",
-                caption="Full log file",
-            )
+            with open(log_path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=f,
+                    filename="bot.log",
+                    caption="Full log file",
+                )
         except Exception as e:
             logger.exception("Send log file: %s", e)
         return
 
 
-def extra_list_keyboard(messages: list) -> InlineKeyboardMarkup:
-    """Build keyboard to manage extra messages (delete only)."""
+def welcome_list_keyboard(messages: list) -> InlineKeyboardMarkup:
+    """Build keyboard to manage welcome messages (delete only)."""
     rows = []
     for idx, m in enumerate(messages, start=1):
         label = f"#{idx} {m.get('type', 'text')}"
         rows.append(
             [
                 InlineKeyboardButton(label, callback_data="noop"),
-                InlineKeyboardButton("🗑", callback_data=f"extra:del:{m['id']}"),
+                InlineKeyboardButton("🗑", callback_data=f"welcome:del:{m['id']}"),
             ]
         )
     rows.append([InlineKeyboardButton("◀️ Back", callback_data="admin:main")])
     return InlineKeyboardMarkup(rows)
 
 
-async def send_welcome_flow(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
-    """Send default welcome: text (with name) + video (if set) + APK (if set)."""
-    from bot.database import get_welcome_config, DEFAULT_WELCOME_TEXT
-    bot = context.bot
-    text = DEFAULT_WELCOME_TEXT.replace("{name}", name or "User")
-    await bot.send_message(chat_id, text)
-    cfg = await get_welcome_config()
-    if cfg.get("video_file_id"):
-        await asyncio.sleep(0.25)
-        await bot.send_video(
-            chat_id,
-            cfg["video_file_id"],
-            caption=cfg.get("video_caption") or None,
-        )
-    if cfg.get("apk_file_id"):
-        await asyncio.sleep(0.25)
-        await bot.send_document(
-            chat_id,
-            cfg["apk_file_id"],
-            caption=cfg.get("apk_caption") or None,
-        )
+def _apply_name(text: str | None, name: str) -> str:
+    """Replace {name} in text. name is already sanitized (e.g. 'User')."""
+    if not text:
+        return ""
+    return text.replace("{name}", name or "User")
 
 
-async def send_extra_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    """Send all extra welcome messages in order."""
-    from bot.database import get_extra_messages
+async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
+    """Send all welcome messages in order. Replaces {name} in text and captions."""
+    from bot.database import get_welcome_messages
 
     bot = context.bot
-    extras = await get_extra_messages()
-    for m in extras:
+    messages = await get_welcome_messages()
+    if not messages:
+        try:
+            await bot.send_message(chat_id, "Welcome! No messages configured yet.")
+        except Exception as e:
+            logger.exception("send_full_welcome (empty): %s", e)
+        return
+    for m in messages:
         t = m.get("type", "text")
         file_id = m.get("file_id")
-        text = m.get("text") or ""
-        caption = m.get("caption") or ""
+        text = _apply_name(m.get("text"), name)
+        caption = _apply_name(m.get("caption"), name)
         try:
             if t == "text":
                 await bot.send_message(chat_id, text or "(empty)")
@@ -266,48 +260,50 @@ async def send_extra_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             else:
                 await bot.send_message(chat_id, text or "(unknown type)")
         except Exception as e:
-            logger.exception("send_extra_messages error: %s", e)
+            logger.exception("send_full_welcome error: %s", e)
         await asyncio.sleep(0.25)
 
 
-async def send_full_welcome(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str) -> None:
-    """Default text+video+APK plus extra messages."""
-    await send_welcome_flow(context, chat_id, name=name)
-    await send_extra_messages(context, chat_id)
-
-
-async def handle_extra_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle extra:del:* callback buttons."""
+async def handle_welcome_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle welcome:done and welcome:del:* callback buttons."""
     query = update.callback_query
-    if not query or not query.data or not query.data.startswith("extra:"):
+    if not query or not query.data or not query.data.startswith("welcome:"):
         return
     user_id = update.effective_user.id if update.effective_user else 0
     if not _is_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     data = query.data
-    if data.startswith("extra:del:"):
+    if data == "welcome:done":
+        await query.answer()
+        await clear_admin_state(user_id)
+        await query.edit_message_text(
+            "Done adding welcome messages.",
+            reply_markup=back_to_admin_keyboard(),
+        )
+        return
+    if data.startswith("welcome:del:"):
         try:
             msg_id = int(data.split(":")[-1])
         except ValueError:
             await query.answer("Invalid id.", show_alert=True)
             return
-        ok = await delete_extra_message(msg_id)
+        ok = await delete_welcome_message(msg_id)
         await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
-        extras = await get_extra_messages()
-        if not extras:
+        messages = await get_welcome_messages()
+        if not messages:
             await query.edit_message_text(
-                "No extra welcome messages left.",
+                "No welcome messages left.",
                 reply_markup=back_to_admin_keyboard(),
             )
         else:
             await query.edit_message_text(
-                "Extra welcome messages (tap 🗑 to delete):",
-                reply_markup=extra_list_keyboard(extras),
+                "Welcome messages (tap 🗑 to delete):",
+                reply_markup=welcome_list_keyboard(messages),
             )
 
 
 def register_admin(app) -> None:
     from telegram.ext import CallbackQueryHandler
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin:"))
-    app.add_handler(CallbackQueryHandler(handle_extra_callbacks, pattern="^extra:"))
+    app.add_handler(CallbackQueryHandler(handle_welcome_callbacks, pattern="^welcome:"))

@@ -1,9 +1,9 @@
-"""Capture admin's welcome video and APK when they send them (state: welcome:set_video / welcome:set_apk)."""
+"""Capture admin's welcome messages and channel setting (states: welcome:add, channel:wait)."""
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot import config
-from bot.database import set_welcome_video, set_welcome_apk, add_extra_message
+from bot.database import set_channel_id, add_welcome_message
 from bot.redis_client import get_admin_state, clear_admin_state
 from bot.keyboards import admin_main_keyboard, back_to_admin_keyboard
 from bot.utils.logging import get_logger
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """When admin is in welcome:set_video / welcome:set_apk / extra:add, store config or extra message."""
+    """When admin is in welcome:add or channel:wait, store the message or channel."""
     user_id = update.effective_user.id if update.effective_user else 0
     if user_id not in config.ADMIN_IDS:
         return
@@ -20,45 +20,49 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
     state = await get_admin_state(user_id)
     if not state:
         return
-    if update.message and update.message.text and update.message.text.strip() == "/cancel":
-        await clear_admin_state(user_id)
-        await update.message.reply_text("Cancelled.", reply_markup=admin_main_keyboard())
-        return
-    if state == "welcome:set_video":
-        if not update.message or not update.message.video:
-            await update.message.reply_text("Please send a video, or /cancel to cancel.", reply_markup=back_to_admin_keyboard())
-            return
-        file_id = update.message.video.file_id
-        caption = (update.message.caption or "").strip()
-        try:
-            await set_welcome_video(file_id, caption or None)
+    if update.message and update.message.text:
+        raw = update.message.text.strip().lower()
+        if raw == "/cancel":
             await clear_admin_state(user_id)
-            await update.message.reply_text(
-                "✅ Welcome video set. Caption saved." if caption else "✅ Welcome video set.",
+            await update.message.reply_text("Cancelled.", reply_markup=admin_main_keyboard())
+            return
+        if raw == "/done" and state == "welcome:add":
+            await clear_admin_state(user_id)
+            await update.message.reply_text("Done adding welcome messages.", reply_markup=admin_main_keyboard())
+            return
+    if state == "channel:wait":
+        msg = update.message
+        if not msg:
+            return
+        channel_id = None
+        if msg.forward_from_chat and getattr(msg.forward_from_chat, "type", None) == "channel":
+            channel_id = msg.forward_from_chat.id
+        elif msg.text:
+            text = msg.text.strip()
+            try:
+                channel_id = int(text)
+            except ValueError:
+                pass
+        if channel_id is None:
+            await msg.reply_text(
+                "Send a forwarded message from your channel, or the channel ID (e.g. -1001234567890). /cancel to abort.",
+                reply_markup=back_to_admin_keyboard(),
+            )
+            return
+        try:
+            await set_channel_id(channel_id)
+            await clear_admin_state(user_id)
+            await msg.reply_text(
+                f"✅ Channel set to `{channel_id}`. Join requests from this channel will be handled.",
                 reply_markup=admin_main_keyboard(),
+                parse_mode="Markdown",
             )
         except Exception as e:
-            logger.exception("set_welcome_video: %s", e)
-            await update.message.reply_text(f"Error: {e}")
+            logger.exception("set_channel_id: %s", e)
+            await msg.reply_text(f"Error: {e}", reply_markup=back_to_admin_keyboard())
         return
-    if state == "welcome:set_apk":
-        if not update.message or not update.message.document:
-            await update.message.reply_text("Please send the APK as a document, or /cancel to cancel.", reply_markup=back_to_admin_keyboard())
-            return
-        file_id = update.message.document.file_id
-        caption = (update.message.caption or "").strip()
-        try:
-            await set_welcome_apk(file_id, caption or None)
-            await clear_admin_state(user_id)
-            await update.message.reply_text(
-                "✅ Welcome APK set. Caption saved." if caption else "✅ Welcome APK set.",
-                reply_markup=admin_main_keyboard(),
-            )
-        except Exception as e:
-            logger.exception("set_welcome_apk: %s", e)
-            await update.message.reply_text(f"Error: {e}")
-        return
-    if state == "extra:add":
+
+    if state == "welcome:add":
         msg = update.message
         if not msg:
             return
@@ -90,24 +94,28 @@ async def capture_message_for_welcome(update: Update, context: ContextTypes.DEFA
                 file_id = msg.voice.file_id
             caption = (msg.caption or "").strip()
         if msg_type != "text" and not file_id:
-            await msg.reply_text("Send text or one media message, or /cancel to abort.", reply_markup=back_to_admin_keyboard())
+            await msg.reply_text("Send text or one media message (photo, video, GIF, document, audio, voice), or /cancel to abort.", reply_markup=back_to_admin_keyboard())
             return
         try:
-            await add_extra_message(msg_type, file_id, text or "", caption)
-            await clear_admin_state(user_id)
+            await add_welcome_message(msg_type, file_id, text or "", caption)
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            done_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Done adding", callback_data="welcome:done")],
+                [InlineKeyboardButton("◀️ Back to Admin", callback_data="admin:main")],
+            ])
             await msg.reply_text(
-                f"✅ Extra welcome message added ({msg_type}).",
-                reply_markup=admin_main_keyboard(),
+                f"✅ Added ({msg_type}). Send another message to add more, or /done when finished.",
+                reply_markup=done_kb,
             )
         except Exception as e:
-            logger.exception("add_extra_message: %s", e)
+            logger.exception("add_welcome_message: %s", e)
             await msg.reply_text(f"Error: {e}")
         return
 
 
 def register_welcome(app) -> None:
     from telegram.ext import MessageHandler, filters
-    # Any media type plus TEXT (for /cancel) while in welcome/extra states.
+    # Any media type plus TEXT (for /cancel) while in welcome:add or channel:wait.
     # Use group -2 so broadcast capture (group -1) can still see messages.
     app.add_handler(
         MessageHandler(

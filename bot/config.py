@@ -32,7 +32,14 @@ def _get_admin_ids() -> List[int]:
 # Required
 BOT_TOKEN: str = _get_env("BOT_TOKEN")
 ADMIN_IDS: List[int] = _get_admin_ids()
-CHANNEL_ID: int = int(_get_env("CHANNEL_ID"))
+# Optional: can be set via admin panel instead
+_raw_channel = os.getenv("CHANNEL_ID", "").strip()
+CHANNEL_ID: int | None = None
+if _raw_channel:
+    try:
+        CHANNEL_ID = int(_raw_channel)
+    except ValueError:
+        raise ValueError(f"Invalid CHANNEL_ID (must be integer): {_raw_channel!r}")
 DATABASE_URL: str = _get_env("DATABASE_URL")
 REDIS_URL: str = _get_env("REDIS_URL")
 WEBHOOK_URL: str = _get_env("WEBHOOK_URL").rstrip("/")
@@ -40,7 +47,10 @@ WEBHOOK_URL: str = _get_env("WEBHOOK_URL").rstrip("/")
 # Optional
 WEBHOOK_PATH: str = os.getenv("WEBHOOK_PATH", "webhook").strip()
 WEBHOOK_HOST: str = os.getenv("WEBHOOK_HOST", "0.0.0.0").strip()
-WEBHOOK_PORT: int = int(os.getenv("WEBHOOK_PORT", "8080"))
+_port = int(os.getenv("WEBHOOK_PORT", "8080"))
+if not (1 <= _port <= 65535):
+    raise ValueError(f"WEBHOOK_PORT must be 1-65535, got {_port}")
+WEBHOOK_PORT: int = _port
 
 # Broadcast rate limit (messages per second)
 BROADCAST_RATE_LIMIT: int = 25

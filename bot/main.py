@@ -25,6 +25,20 @@ from bot.utils.logging import setup_logging, get_logger
 logger = get_logger(__name__)
 
 
+async def _cleanup() -> None:
+    """Close DB pool and Redis on shutdown."""
+    try:
+        await close_redis()
+        logger.info("Redis connection closed.")
+    except Exception as e:
+        logger.exception("Redis close: %s", e)
+    try:
+        await close_pool()
+        logger.info("Database pool closed.")
+    except Exception as e:
+        logger.exception("Pool close: %s", e)
+
+
 async def post_init(app: Application) -> None:
     """After application init: DB, Redis, tables, broadcast worker."""
     await init_pool()
@@ -71,13 +85,21 @@ def main() -> None:
     register_handlers(app)
     app.add_error_handler(error_handler)
 
-    # Run webhook
-    app.run_webhook(
-        listen=config.WEBHOOK_HOST,
-        port=config.WEBHOOK_PORT,
-        url_path=config.WEBHOOK_PATH,
-        webhook_url=f"{config.WEBHOOK_URL}/{config.WEBHOOK_PATH}",
-    )
+    # Run webhook (blocking); cleanup on exit
+    try:
+        app.run_webhook(
+            listen=config.WEBHOOK_HOST,
+            port=config.WEBHOOK_PORT,
+            url_path=config.WEBHOOK_PATH,
+            webhook_url=f"{config.WEBHOOK_URL}/{config.WEBHOOK_PATH}",
+        )
+    finally:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_cleanup())
+        finally:
+            loop.close()
 
 
 if __name__ == "__main__":

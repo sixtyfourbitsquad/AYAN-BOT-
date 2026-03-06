@@ -40,9 +40,11 @@ CREATE TABLE IF NOT EXISTS welcome_config (
     video_file_id VARCHAR(255),
     video_caption TEXT,
     apk_file_id VARCHAR(255),
-    apk_caption TEXT
+    apk_caption TEXT,
+    channel_id BIGINT
 );
 INSERT INTO welcome_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+ALTER TABLE welcome_config ADD COLUMN IF NOT EXISTS channel_id BIGINT;
 """
 
 
@@ -120,49 +122,26 @@ async def get_user_stats() -> dict:
     }
 
 
-# --- Welcome config (single row: video + APK with captions) ---
-DEFAULT_WELCOME_TEXT = "Hi {name} 👋\n\nTumhari Join Request APPROVE ho gayi ✅🔥\n\nSetup Video & APK niche diya hai 👇"
-
-
-async def get_welcome_config() -> dict:
-    """Returns dict with video_file_id, video_caption, apk_file_id, apk_caption (all optional)."""
+# --- Welcome config (single row: channel_id only) ---
+async def get_channel_id() -> Optional[int]:
+    """Returns the channel ID set via admin panel, or None if not set."""
     pool = get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT video_file_id, video_caption, apk_file_id, apk_caption FROM welcome_config WHERE id = 1"
-        )
-        if row is None:
-            return {
-                "video_file_id": None,
-                "video_caption": None,
-                "apk_file_id": None,
-                "apk_caption": None,
-            }
-        return dict(row)
+        return await conn.fetchval("SELECT channel_id FROM welcome_config WHERE id = 1")
 
 
-async def set_welcome_video(file_id: str, caption: Optional[str] = None) -> None:
+async def set_channel_id(channel_id: int) -> None:
+    """Store the channel ID (set via admin panel)."""
     pool = get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE welcome_config SET video_file_id = $1, video_caption = $2 WHERE id = 1",
-            file_id,
-            caption or "",
+            "UPDATE welcome_config SET channel_id = $1 WHERE id = 1",
+            channel_id,
         )
 
 
-async def set_welcome_apk(file_id: str, caption: Optional[str] = None) -> None:
-    pool = get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE welcome_config SET apk_file_id = $1, apk_caption = $2 WHERE id = 1",
-            file_id,
-            caption or "",
-        )
-
-
-# --- Extra welcome messages (optional, sent after default video+APK) ---
-async def get_extra_messages() -> List[dict]:
+# --- Welcome messages (any type: text, photo, video, document, etc.) ---
+async def get_welcome_messages() -> List[dict]:
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -171,7 +150,7 @@ async def get_extra_messages() -> List[dict]:
         return [dict(r) for r in rows]
 
 
-async def add_extra_message(
+async def add_welcome_message(
     msg_type: str,
     file_id: Optional[str],
     text: Optional[str],
@@ -195,7 +174,7 @@ async def add_extra_message(
         )
 
 
-async def delete_extra_message(msg_id: int) -> bool:
+async def delete_welcome_message(msg_id: int) -> bool:
     pool = get_pool()
     async with pool.acquire() as conn:
         result = await conn.execute("DELETE FROM welcome_messages WHERE id = $1", msg_id)

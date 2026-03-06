@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 from telegram.error import Forbidden
 
 from bot import config
-from bot.database import increment_join_requests
+from bot.database import increment_join_requests, get_channel_id
 from bot.handlers.admin import send_full_welcome
 from bot.utils.logging import get_logger
 
@@ -16,7 +16,10 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     req = update.chat_join_request
     if not req:
         return
-    if req.chat.id != config.CHANNEL_ID:
+    channel_id = await get_channel_id()
+    if channel_id is None:
+        channel_id = config.CHANNEL_ID
+    if channel_id is None or req.chat.id != channel_id:
         return
 
     user_id = req.from_user.id if req.from_user else 0

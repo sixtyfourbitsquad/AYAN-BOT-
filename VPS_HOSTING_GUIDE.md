@@ -260,7 +260,7 @@ As **adii**:
 
 ```bash
 cd ~
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git telegram-bot
+git clone https://github.com/sixtyfourbitsquad/AYAN-BOT-.git telegram-bot
 cd telegram-bot
 ```
 
