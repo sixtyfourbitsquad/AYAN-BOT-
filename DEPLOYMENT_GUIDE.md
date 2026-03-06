@@ -491,6 +491,38 @@ sudo systemctl restart telegram-bot-client1
 
 Run any new migrations (e.g. new `migrations/00X_*.sql`) against that bot’s database before or after restart.
 
+### Updating both bots
+
+Run these on your VPS (as user `adii` or whoever owns the project dirs). Each bot has its own folder and service.
+
+**Bot 1 (Client 1):**
+```bash
+cd ~/telegram-bot-client1
+git pull
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart telegram-bot-client1
+```
+
+**Bot 2 (Client 2):**
+```bash
+cd ~/telegram-bot-client2
+git pull
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart telegram-bot-client2
+```
+
+If there are new migration files (e.g. `migrations/004_*.sql`), run them for each database before or after restart:
+
+```bash
+# Bot 1 DB (use Bot 1’s DB user and database from .env)
+psql -h localhost -U bot1user -d telegram_bot_client1 -f migrations/004_something.sql
+
+# Bot 2 DB
+psql -h localhost -U bot2user -d telegram_bot_client2 -f migrations/004_something.sql
+```
+
 ### Common issues
 
 | Symptom | What to check |
