@@ -4,6 +4,8 @@ from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telegram.error import NetworkError
+from telegram.helpers import escape_markdown
 
 from bot import config
 from bot.database import (
@@ -37,7 +39,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await query.answer()
 
-    data = query.data
+    try:
+        await _admin_callback_handle(query, context, user_id, query.data)
+    except NetworkError as e:
+        logger.warning("Admin callback network error: %s", e)
+        try:
+            if query.message:
+                await query.message.reply_text("⚠️ Network error. Please try again.")
+        except Exception:
+            pass
+
+
+async def _admin_callback_handle(
+    query, context: ContextTypes.DEFAULT_TYPE, user_id: int, data: str
+) -> None:
+    """Handle admin callback data; may raise NetworkError on transient API failures."""
     if data == "admin:main":
         await query.edit_message_text(
             "👋 Admin panel. Choose an option:",
@@ -265,10 +281,17 @@ def premium_list_keyboard(messages: list) -> InlineKeyboardMarkup:
 
 
 def _apply_name(text: str | None, name: str) -> str:
-    """Replace {name} in text. name is already sanitized (e.g. 'User')."""
+    """Replace {name} in text with bold name. Returns Markdown-safe string (use parse_mode='Markdown')."""
     if not text:
         return ""
-    return text.replace("{name}", name or "User")
+    name = name or "User"
+    if "{name}" not in text:
+        return text
+    # Escape parts for Markdown v1 so * _ ` [ don't break; wrap name in * for bold
+    parts = text.split("{name}")
+    escaped_parts = [escape_markdown(p, version=1) for p in parts]
+    bold_name = "*" + escape_markdown(name, version=1) + "*"
+    return bold_name.join(escaped_parts)
 
 
 async def _send_message_list(
@@ -276,10 +299,13 @@ async def _send_message_list(
 ) -> None:
     """Send messages via copy_message when possible (preserves Premium/custom emojis); else reconstruct."""
     for m in messages:
+        raw_text = m.get("text") or ""
+        raw_caption = m.get("caption") or ""
+        needs_name = "{name}" in raw_text or "{name}" in raw_caption
         copy_chat = m.get("copy_from_chat_id")
         copy_msg_id = m.get("copy_from_message_id")
-        # Prefer copy_message to preserve custom emoji entities (avoids 🟥 placeholders)
-        if copy_chat is not None and copy_msg_id is not None:
+        # Use copy_message only when we don't need {name} substitution (copy preserves emojis but not placeholders)
+        if not needs_name and copy_chat is not None and copy_msg_id is not None:
             try:
                 await bot.copy_message(
                     chat_id=chat_id,
@@ -290,30 +316,55 @@ async def _send_message_list(
                 continue
             except Exception as e:
                 logger.warning("%s copy_message fallback: %s", log_prefix, e)
-        # Fallback: reconstruct from stored text/file_id/caption (no custom emoji preservation)
+        # Reconstruct so we can substitute {name} and show it bold
         t = m.get("type", "text")
         file_id = m.get("file_id")
-        text = _apply_name(m.get("text"), name)
-        caption = _apply_name(m.get("caption"), name)
+        text = _apply_name(raw_text, name)
+        caption = _apply_name(raw_caption, name)
         if caption and len(caption) > 1024:
             caption = caption[:1021] + "..."
+        use_markdown = bool(needs_name)
         try:
             if t == "text":
-                await bot.send_message(chat_id, text or "(empty)")
+                await bot.send_message(
+                    chat_id, text or "(empty)",
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "photo":
-                await bot.send_photo(chat_id, file_id, caption=caption or None)
+                await bot.send_photo(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "video":
-                await bot.send_video(chat_id, file_id, caption=caption or None)
+                await bot.send_video(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "animation":
-                await bot.send_animation(chat_id, file_id, caption=caption or None)
+                await bot.send_animation(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "document":
-                await bot.send_document(chat_id, file_id, caption=caption or None)
+                await bot.send_document(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "audio":
-                await bot.send_audio(chat_id, file_id, caption=caption or None)
+                await bot.send_audio(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             elif t == "voice":
-                await bot.send_voice(chat_id, file_id, caption=caption or None)
+                await bot.send_voice(
+                    chat_id, file_id, caption=caption or None,
+                    parse_mode="Markdown" if use_markdown else None,
+                )
             else:
-                await bot.send_message(chat_id, text or "(unknown type)")
+                await bot.send_message(
+                    chat_id, text or "(unknown type)",
+                    parse_mode="Markdown" if use_markdown else None,
+                )
         except Exception as e:
             logger.exception("%s error: %s", log_prefix, e)
         await asyncio.sleep(0.25)
@@ -347,34 +398,42 @@ async def handle_welcome_callbacks(update: Update, context: ContextTypes.DEFAULT
     if not _is_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
-    data = query.data
-    if data == "welcome:done":
-        await query.answer()
-        await clear_admin_state(user_id)
-        await query.edit_message_text(
-            "Done adding welcome messages.",
-            reply_markup=back_to_admin_keyboard(),
-        )
-        return
-    if data.startswith("welcome:del:"):
-        try:
-            msg_id = int(data.split(":")[-1])
-        except ValueError:
-            await query.answer("Invalid id.", show_alert=True)
-            return
-        ok = await delete_welcome_message(msg_id)
-        await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
-        messages = await get_welcome_messages()
-        if not messages:
+    try:
+        data = query.data
+        if data == "welcome:done":
+            await query.answer()
+            await clear_admin_state(user_id)
             await query.edit_message_text(
-                "No welcome messages left.",
+                "Done adding welcome messages.",
                 reply_markup=back_to_admin_keyboard(),
             )
-        else:
-            await query.edit_message_text(
-                "Welcome messages (tap 🗑 to delete):",
-                reply_markup=welcome_list_keyboard(messages),
-            )
+            return
+        if data.startswith("welcome:del:"):
+            try:
+                msg_id = int(data.split(":")[-1])
+            except ValueError:
+                await query.answer("Invalid id.", show_alert=True)
+                return
+            ok = await delete_welcome_message(msg_id)
+            await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
+            messages = await get_welcome_messages()
+            if not messages:
+                await query.edit_message_text(
+                    "No welcome messages left.",
+                    reply_markup=back_to_admin_keyboard(),
+                )
+            else:
+                await query.edit_message_text(
+                    "Welcome messages (tap 🗑 to delete):",
+                    reply_markup=welcome_list_keyboard(messages),
+                )
+    except NetworkError as e:
+        logger.warning("Welcome callback network error: %s", e)
+        try:
+            if query.message:
+                await query.message.reply_text("⚠️ Network error. Please try again.")
+        except Exception:
+            pass
 
 
 async def handle_premium_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -386,34 +445,42 @@ async def handle_premium_callbacks(update: Update, context: ContextTypes.DEFAULT
     if not _is_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
-    data = query.data
-    if data == "premium:done":
-        await query.answer()
-        await clear_admin_state(user_id)
-        await query.edit_message_text(
-            "Done adding premium messages.",
-            reply_markup=back_to_admin_keyboard(),
-        )
-        return
-    if data.startswith("premium:del:"):
-        try:
-            msg_id = int(data.split(":")[-1])
-        except ValueError:
-            await query.answer("Invalid id.", show_alert=True)
-            return
-        ok = await delete_premium_message(msg_id)
-        await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
-        messages = await get_premium_messages()
-        if not messages:
+    try:
+        data = query.data
+        if data == "premium:done":
+            await query.answer()
+            await clear_admin_state(user_id)
             await query.edit_message_text(
-                "No premium messages left.",
+                "Done adding premium messages.",
                 reply_markup=back_to_admin_keyboard(),
             )
-        else:
-            await query.edit_message_text(
-                "Premium messages (tap 🗑 to delete):",
-                reply_markup=premium_list_keyboard(messages),
-            )
+            return
+        if data.startswith("premium:del:"):
+            try:
+                msg_id = int(data.split(":")[-1])
+            except ValueError:
+                await query.answer("Invalid id.", show_alert=True)
+                return
+            ok = await delete_premium_message(msg_id)
+            await query.answer("Deleted." if ok else "Not found.", show_alert=not ok)
+            messages = await get_premium_messages()
+            if not messages:
+                await query.edit_message_text(
+                    "No premium messages left.",
+                    reply_markup=back_to_admin_keyboard(),
+                )
+            else:
+                await query.edit_message_text(
+                    "Premium messages (tap 🗑 to delete):",
+                    reply_markup=premium_list_keyboard(messages),
+                )
+    except NetworkError as e:
+        logger.warning("Premium callback network error: %s", e)
+        try:
+            if query.message:
+                await query.message.reply_text("⚠️ Network error. Please try again.")
+        except Exception:
+            pass
 
 
 def register_admin(app) -> None:
