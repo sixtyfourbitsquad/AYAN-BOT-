@@ -9,6 +9,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("⭐ Add Premium Message", callback_data="admin:add_premium")],
         [InlineKeyboardButton("📂 Manage Premium Messages", callback_data="admin:manage_premium")],
         [InlineKeyboardButton("📺 Set Channel", callback_data="admin:set_channel")],
+        [InlineKeyboardButton("🤖 Toggle Auto Accept", callback_data="admin:auto_accept_toggle")],
         [InlineKeyboardButton("🔍 Preview Welcome", callback_data="admin:preview_welcome")],
         [InlineKeyboardButton("📊 User Stats", callback_data="admin:stats")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="admin:broadcast")],

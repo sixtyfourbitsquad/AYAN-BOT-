@@ -17,7 +17,14 @@ from bot.database import (
     delete_premium_message,
     get_pool,
 )
-from bot.redis_client import get_redis, set_admin_state, get_admin_state, clear_admin_state
+from bot.redis_client import (
+    get_redis,
+    set_admin_state,
+    get_admin_state,
+    clear_admin_state,
+    get_auto_accept_enabled,
+    toggle_auto_accept_enabled,
+)
 from bot.keyboards import admin_main_keyboard, back_to_admin_keyboard
 from bot.utils.logging import get_logger
 
@@ -149,6 +156,18 @@ async def _admin_callback_handle(
             )
         return
 
+    if data == "admin:auto_accept_toggle":
+        enabled = await toggle_auto_accept_enabled()
+        state_label = "ON ✅" if enabled else "OFF ❌"
+        await query.edit_message_text(
+            f"🤖 Channel Auto Accept is now: *{state_label}*\n\n"
+            "When ON, join requests in your configured channel are automatically approved.\n"
+            "When OFF, users only receive welcome messages.",
+            reply_markup=back_to_admin_keyboard(),
+            parse_mode="Markdown",
+        )
+        return
+
     if data == "admin:stats":
         stats = await get_user_stats()
         text = (
@@ -200,6 +219,8 @@ async def _admin_callback_handle(
         if channel_id is None:
             channel_id = config.CHANNEL_ID
         channel_display = f"`{channel_id}`" if channel_id is not None else "_Not set (set via Admin → Set Channel)_"
+        auto_accept = await get_auto_accept_enabled()
+        auto_accept_label = "ON ✅" if auto_accept else "OFF ❌"
         stats = await get_user_stats()
         welcome_count = len(await get_welcome_messages())
         premium_count = len(await get_premium_messages())
@@ -208,6 +229,7 @@ async def _admin_callback_handle(
             f"Uptime: {uptime}\n"
             f"Total users: {stats['total_users']}\n"
             f"Welcome messages: {welcome_count} | Premium: {premium_count}\n"
+            f"Channel auto accept: {auto_accept_label}\n"
             f"Channel ID: {channel_display}\n"
             f"Admin IDs: `{config.ADMIN_IDS}`\n\n"
             f"DB: {db_status}\n"
